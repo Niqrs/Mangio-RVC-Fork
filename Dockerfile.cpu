@@ -1,0 +1,42 @@
+# syntax=docker/dockerfile:1
+FROM python:3.10-slim-bullseye
+
+# Установка базовых зависимостей
+RUN apt-get update && apt-get install -y \
+    ffmpeg \
+    build-essential \
+    aria2 \
+    wget \
+    git \
+    curl \
+    libsndfile1 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Обновление pip
+RUN python -m pip install --upgrade pip setuptools wheel
+
+WORKDIR /app
+
+# Копирование requirements и установка зависимостей
+COPY requirements.txt .
+
+# Установка PyTorch CPU версии
+RUN pip install torch==2.0.0+cpu torchaudio==2.0.1+cpu --index-url https://download.pytorch.org/whl/cpu
+
+# Установка остальных зависимостей
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Копирование приложения
+COPY . .
+
+# Создание необходимых директорий
+RUN mkdir -p logs weights pretrained pretrained_v2 uvr5_weights audio-outputs datasets audios
+
+# Установка прав доступа
+RUN chmod -R 777 logs weights audio-outputs datasets audios
+
+# Порт для веб-интерфейса
+EXPOSE 7865
+
+# Запуск приложения
+CMD ["python", "infer-web.py", "--port", "7865"] 

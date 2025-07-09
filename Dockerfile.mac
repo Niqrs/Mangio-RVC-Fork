@@ -1,0 +1,62 @@
+# syntax=docker/dockerfile:1
+FROM python:3.10-bullseye
+
+# Установка системных зависимостей
+RUN apt-get update && apt-get install -y \
+    ffmpeg \
+    build-essential \
+    cmake \
+    ninja-build \
+    aria2 \
+    wget \
+    git \
+    curl \
+    libsndfile1 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Обновление pip (ограничиваем <24 из-за проблемы с omegaconf)
+RUN python -m pip install --upgrade "pip<24" setuptools wheel
+
+WORKDIR /app
+
+# Копирование requirements
+COPY requirements.txt .
+
+# Удаляем проблемные пакеты или заменяем версии
+RUN sed -i '/^praat-parselmouth==/d' requirements.txt && \
+    sed -i '/^omegaconf==/d' requirements.txt && \
+    sed -i 's/faiss-cpu==1.7.2/faiss-cpu==1.7.4/' requirements.txt && \
+    sed -i 's/onnxruntime-gpu==1.14.1/onnxruntime==1.14.1/' requirements.txt && \
+    sed -i 's/PySimpleGUI==4.60.4/PySimpleGUI==5.0.8.2/' requirements.txt && \
+    sed -i 's/ffmpy==0.0.3/ffmpy==0.3.0/' requirements.txt
+
+# Установка PyTorch с поддержкой MPS (для Apple Silicon)
+RUN pip install torch==2.0.0 torchaudio==2.0.1
+
+# Установка остальных зависимостей
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Копирование приложения
+COPY . .
+
+# Пытаемся установить praat-parselmouth, если не получается - используем заглушку
+RUN pip install praat-parselmouth || \
+    (echo "Warning: praat-parselmouth installation failed, using mock" && \
+     mkdir -p /usr/local/lib/python3.10/site-packages && \
+     cp parselmouth_patch.py /usr/local/lib/python3.10/site-packages/parselmouth.py)
+
+# Создание необходимых директорий
+RUN mkdir -p logs weights pretrained pretrained_v2 uvr5_weights audio-outputs datasets audios
+
+# Установка прав доступа
+RUN chmod -R 777 logs weights audio-outputs datasets audios
+
+# Переменные окружения для оптимизации Apple Silicon
+ENV PYTORCH_MPS_HIGH_WATERMARK_RATIO=0.0
+ENV PYTORCH_ENABLE_MPS_FALLBACK=1
+
+# Порт для веб-интерфейса
+EXPOSE 7865
+
+# Запуск приложения
+CMD ["python", "infer-web.py", "--port", "7865"] 

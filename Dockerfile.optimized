@@ -1,0 +1,71 @@
+# syntax=docker/dockerfile:1
+FROM nvidia/cuda:11.8.0-cudnn8-devel-ubuntu22.04
+
+# Предотвращение интерактивных запросов при установке пакетов
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Установка Python и базовых зависимостей
+RUN apt-get update && apt-get install -y \
+    python3 \
+    python3-pip \
+    python3-dev \
+    python3-venv \
+    ffmpeg \
+    build-essential \
+    cmake \
+    ninja-build \
+    aria2 \
+    wget \
+    git \
+    curl \
+    libsndfile1 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Создание символической ссылки для python
+RUN ln -s /usr/bin/python3 /usr/bin/python
+
+# Установка pip для Python 3
+RUN curl -sS https://bootstrap.pypa.io/get-pip.py | python3
+
+# Обновление pip
+RUN python -m pip install --upgrade "pip<24" setuptools wheel
+
+WORKDIR /app
+
+# Копирование requirements
+COPY requirements.txt .
+
+# Удаляем проблемные пакеты или заменяем версии
+RUN sed -i '/^praat-parselmouth==/d' requirements.txt && \
+    sed -i '/^omegaconf==/d' requirements.txt && \
+    sed -i 's/faiss-cpu==1.7.2/faiss-gpu==1.7.4/' requirements.txt && \
+    sed -i 's/onnxruntime-gpu==1.14.1/onnxruntime-gpu==1.14.1/' requirements.txt && \
+    sed -i 's/PySimpleGUI==4.60.4/PySimpleGUI==5.0.8.2/' requirements.txt && \
+    sed -i 's/ffmpy==0.0.3/ffmpy==0.3.0/' requirements.txt
+
+# Установка PyTorch с поддержкой CUDA 11.8
+RUN pip install torch==2.0.0+cu118 torchaudio==2.0.1+cu118 --index-url https://download.pytorch.org/whl/cu118
+
+# Установка остальных зависимостей
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Копирование приложения
+COPY . .
+
+# Пытаемся установить praat-parselmouth, если не получается - используем заглушку
+RUN pip install praat-parselmouth || \
+    (echo "Warning: praat-parselmouth installation failed, using mock" && \
+     mkdir -p /usr/local/lib/python3.10/site-packages && \
+     cp parselmouth_patch.py /usr/local/lib/python3.10/site-packages/parselmouth.py)
+
+# Создание необходимых директорий
+RUN mkdir -p logs weights pretrained pretrained_v2 uvr5_weights audio-outputs datasets audios
+
+# Установка прав доступа
+RUN chmod -R 777 logs weights audio-outputs datasets audios
+
+# Порт для веб-интерфейса
+EXPOSE 3000
+
+# Запуск приложения (для RunPod на порту 3000 без автооткрытия браузера)
+CMD ["python", "infer-web.py", "--port", "3000", "--noautoopen"] 

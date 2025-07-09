@@ -1,0 +1,46 @@
+version: "3.8"
+
+# Конфигурация для RunPod с NVIDIA GPU и CUDA поддержкой
+
+services:
+  mangio-rvc-runpod:
+    build:
+      context: .
+      dockerfile: Dockerfile.optimized # CUDA версия!
+    image: mangio-rvc-runpod:latest
+    container_name: mangio-rvc-runpod
+    runtime: nvidia
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+      - TZ=UTC
+      # Отключаем автооткрытие браузера
+      - RVC_NO_AUTOOPEN=1
+    ports:
+      - "3000:3000" # RunPod обычно использует порт 3000
+    volumes:
+      # Для RunPod workspace обычно монтируется в /workspace
+      - /workspace/logs:/app/logs
+      - /workspace/weights:/app/weights
+      - /workspace/audio-outputs:/app/audio-outputs
+      - /workspace/datasets:/app/datasets
+      - /workspace/audios:/app/audios
+      # Модели (если они в workspace)
+      - /workspace/pretrained:/app/pretrained
+      - /workspace/pretrained_v2:/app/pretrained_v2
+      - /workspace/uvr5_weights:/app/uvr5_weights
+      - /workspace/hubert_base.pt:/app/hubert_base.pt:ro
+      - /workspace/rmvpe.pt:/app/rmvpe.pt:ro
+    restart: unless-stopped
+    stdin_open: true
+    tty: true
+    # Ограничения ресурсов (RunPod обычно предоставляет много GPU памяти)
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    # Запуск на порту 3000 без автооткрытия браузера
+    command: ["python", "infer-web.py", "--port", "3000", "--noautoopen"]

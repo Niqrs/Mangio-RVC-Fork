@@ -47,3 +47,6 @@ trainset_preprocess_pipeline_print.py
 configs/48k.json
 configs/40k.json
 configs/32k.json
+
+# GPU optimization config
+gpu_optimization_config.json

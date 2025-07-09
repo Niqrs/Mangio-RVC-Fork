@@ -1,0 +1,90 @@
+# syntax=docker/dockerfile:1
+# Optimized for RunPod with CUDA 12.1 and multi-stage build
+
+# Stage 1: Builder
+FROM nvidia/cuda:12.1.0-cudnn8-devel-ubuntu22.04 AS builder
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV PYTHONUNBUFFERED=1
+
+RUN apt-get update && apt-get install -y \
+    python3.10 \
+    python3.10-dev \
+    python3.10-venv \
+    python3-pip \
+    build-essential \
+    cmake \
+    ninja-build \
+    git \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN python3.10 -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+RUN pip install --trusted-host pypi.org --trusted-host pypi.python.org --trusted-host files.pythonhosted.org --upgrade pip setuptools wheel
+
+WORKDIR /build
+
+COPY requirements.txt .
+
+RUN sed -i '/^praat-parselmouth==/d' requirements.txt && \
+    sed -i '/^omegaconf==/d' requirements.txt && \
+    sed -i 's/faiss-cpu==1.7.2/faiss-gpu==1.7.2/' requirements.txt && \
+    sed -i 's/PySimpleGUI==4.60.4/PySimpleGUI>=5.0/' requirements.txt && \
+    sed -i 's/ffmpy==0.0.3/ffmpy==0.3.0/' requirements.txt && \
+    sed -i 's/onnxruntime-gpu==1.14.1/onnxruntime-gpu==1.16.3/' requirements.txt
+
+RUN pip install torch==2.1.0+cu121 torchaudio==2.1.0+cu121 --index-url https://download.pytorch.org/whl/cu121 --trusted-host download.pytorch.org
+
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install --trusted-host pypi.org --trusted-host pypi.python.org --trusted-host files.pythonhosted.org --no-deps -r requirements.txt
+
+RUN pip install --trusted-host pypi.org --trusted-host pypi.python.org --trusted-host files.pythonhosted.org ninja
+
+# Опциональная установка TensorRT (может не удаться в некоторых средах)
+RUN pip install --extra-index-url https://pypi.nvidia.com/ --trusted-host pypi.nvidia.com tensorrt || \
+    echo "TensorRT installation failed, continuing without it (not critical for basic functionality)"
+
+# Stage 2: Runtime
+FROM nvidia/cuda:12.1.0-cudnn8-runtime-ubuntu22.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV PYTHONUNBUFFERED=1
+ENV PATH="/opt/venv/bin:$PATH"
+
+RUN apt-get update && apt-get install -y \
+    python3.10 \
+    ffmpeg \
+    libsndfile1 \
+    libgomp1 \
+    curl \
+    aria2 \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /opt/venv /opt/venv
+
+WORKDIR /app
+
+COPY . .
+
+RUN mkdir -p /opt/venv/lib/python3.10/site-packages && \
+    cp parselmouth_patch.py /opt/venv/lib/python3.10/site-packages/parselmouth.py || true
+
+RUN mkdir -p logs weights pretrained pretrained_v2 uvr5_weights audio-outputs datasets audios && \
+    chmod -R 777 logs weights audio-outputs datasets audios
+
+ENV CUDA_VISIBLE_DEVICES=0
+ENV TORCH_CUDA_ARCH_LIST="7.0;7.5;8.0;8.6;8.9;9.0"
+ENV CUDA_LAUNCH_BLOCKING=0
+ENV CUDNN_BENCHMARK=1
+ENV PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:512
+
+COPY optimize_for_gpu.py .
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s \
+    CMD curl -f http://localhost:3000/ || exit 1
+
+EXPOSE 3000
+
+CMD ["python", "-u", "infer-web.py", "--port", "3000", "--noautoopen"]

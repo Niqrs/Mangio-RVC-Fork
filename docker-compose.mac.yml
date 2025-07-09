@@ -1,0 +1,43 @@
+version: "3.8"
+
+# Оптимизировано для Apple Silicon (M1/M2/M3/M4) с поддержкой MPS (Metal Performance Shaders)
+# Автоматически определяет и использует GPU ускорение на Mac
+
+services:
+  mangio-rvc-mac:
+    build:
+      context: .
+      dockerfile: Dockerfile.mac
+    image: mangio-rvc-mac:latest
+    container_name: mangio-rvc-mac
+    environment:
+      - TZ=Europe/Moscow
+      # Оптимизация для Apple Silicon MPS
+      - PYTORCH_MPS_HIGH_WATERMARK_RATIO=0.0
+      - PYTORCH_ENABLE_MPS_FALLBACK=1
+    ports:
+      - "7865:7865"
+    volumes:
+      # Монтируем директории для сохранения данных
+      - ./logs:/app/logs
+      - ./weights:/app/weights
+      - ./audio-outputs:/app/audio-outputs
+      - ./datasets:/app/datasets
+      - ./audios:/app/audios
+      # Монтируем предобученные модели
+      - ./pretrained:/app/pretrained
+      - ./pretrained_v2:/app/pretrained_v2
+      - ./uvr5_weights:/app/uvr5_weights
+      - ./hubert_base.pt:/app/hubert_base.pt:ro
+      - ./rmvpe.pt:/app/rmvpe.pt:ro
+      # Монтируем формант пресеты
+      - ./formantshiftcfg:/app/formantshiftcfg
+    restart: unless-stopped
+    stdin_open: true
+    tty: true
+    # Ограничения ресурсов для macOS
+    deploy:
+      resources:
+        limits:
+          cpus: "8"
+          memory: 16G
